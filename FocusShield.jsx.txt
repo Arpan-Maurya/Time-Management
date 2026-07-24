@@ -1,0 +1,867 @@
+import { useState, useEffect, useRef, useCallback } from "react";
+
+// ── Design tokens ──────────────────────────────────────────────
+const C = {
+  bg: "#0A0F1E",
+  surface: "#111827",
+  card: "#1A2235",
+  border: "#1E2D45",
+  accent: "#4F8EF7",
+  accentSoft: "#1E3A6E",
+  accentGlow: "rgba(79,142,247,0.18)",
+  danger: "#F76B6B",
+  dangerSoft: "#3D1A1A",
+  success: "#4FC87A",
+  successSoft: "#1A3D2B",
+  warn: "#F7C94F",
+  warnSoft: "#3D2E1A",
+  textPrimary: "#F0F4FF",
+  textSecondary: "#7B91B0",
+  textMuted: "#3D5066",
+};
+
+const T = {
+  display: "'Inter', system-ui, sans-serif",
+  mono: "'JetBrains Mono', 'Fira Code', monospace",
+};
+
+// ── Mock installed apps ───────────────────────────────────────
+const MOCK_APPS = [
+  { id: "instagram", name: "Instagram", icon: "📸", category: "Social" },
+  { id: "youtube", name: "YouTube", icon: "▶️", category: "Entertainment" },
+  { id: "twitter", name: "X (Twitter)", icon: "🐦", category: "Social" },
+  { id: "tiktok", name: "TikTok", icon: "🎵", category: "Entertainment" },
+  { id: "reddit", name: "Reddit", icon: "🤖", category: "Social" },
+  { id: "netflix", name: "Netflix", icon: "🎬", category: "Entertainment" },
+  { id: "snapchat", name: "Snapchat", icon: "👻", category: "Social" },
+  { id: "discord", name: "Discord", icon: "💬", category: "Social" },
+  { id: "whatsapp", name: "WhatsApp", icon: "💚", category: "Messaging" },
+  { id: "telegram", name: "Telegram", icon: "✈️", category: "Messaging" },
+  { id: "facebook", name: "Facebook", icon: "👤", category: "Social" },
+  { id: "games", name: "Games Hub", icon: "🎮", category: "Entertainment" },
+  { id: "amazon", name: "Amazon", icon: "📦", category: "Shopping" },
+  { id: "spotify", name: "Spotify", icon: "🎧", category: "Music" },
+  { id: "twitch", name: "Twitch", icon: "🟣", category: "Entertainment" },
+];
+
+const QUOTES = [
+  "One hour of deep focus beats four hours of distraction.",
+  "Success is the sum of small efforts, repeated day in and day out.",
+  "The secret of getting ahead is getting started.",
+  "Focus is the art of knowing what to ignore.",
+  "You don't need more time — you need more focus.",
+];
+
+const DURATIONS = [
+  { label: "15 min", seconds: 900 },
+  { label: "30 min", seconds: 1800 },
+  { label: "45 min", seconds: 2700 },
+  { label: "1 hour", seconds: 3600 },
+  { label: "2 hours", seconds: 7200 },
+];
+
+function fmt(sec) {
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+function fmtMin(sec) {
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  if (h > 0 && m > 0) return `${h}h ${m}m`;
+  if (h > 0) return `${h}h`;
+  return `${m}m`;
+}
+
+// ── Statistics store (in-memory) ──────────────────────────────
+const initialStats = {
+  totalFocusTime: 8340,   // seconds
+  sessions: 12,
+  longestSession: 3600,
+  streak: 4,
+  emergencyExits: 1,
+  history: [
+    { day: "Mon", mins: 45 },
+    { day: "Tue", mins: 90 },
+    { day: "Wed", mins: 30 },
+    { day: "Thu", mins: 120 },
+    { day: "Fri", mins: 60 },
+    { day: "Sat", mins: 75 },
+    { day: "Sun", mins: 0 },
+  ],
+};
+
+// ── UI primitives ─────────────────────────────────────────────
+const px = (style = {}) => ({ fontFamily: T.display, ...style });
+
+function Btn({ children, onClick, variant = "primary", style = {}, disabled = false }) {
+  const base = {
+    border: "none", borderRadius: 14, padding: "14px 24px",
+    fontSize: 15, fontWeight: 600, cursor: disabled ? "not-allowed" : "pointer",
+    transition: "all 0.18s", fontFamily: T.display, letterSpacing: 0.2,
+    opacity: disabled ? 0.5 : 1,
+  };
+  const variants = {
+    primary: { background: C.accent, color: "#fff", boxShadow: `0 4px 24px ${C.accentGlow}` },
+    ghost: { background: C.card, color: C.textPrimary, border: `1px solid ${C.border}` },
+    danger: { background: C.danger, color: "#fff" },
+    success: { background: C.success, color: "#0A1A12" },
+    outline: { background: "transparent", color: C.accent, border: `1.5px solid ${C.accent}` },
+  };
+  return (
+    <button
+      onClick={disabled ? undefined : onClick}
+      style={{ ...base, ...variants[variant], ...style }}
+      onMouseEnter={e => !disabled && (e.target.style.filter = "brightness(1.12)")}
+      onMouseLeave={e => (e.target.style.filter = "brightness(1)")}
+    >
+      {children}
+    </button>
+  );
+}
+
+function Card({ children, style = {} }) {
+  return (
+    <div style={{
+      background: C.card, border: `1px solid ${C.border}`,
+      borderRadius: 20, padding: 20, ...style,
+    }}>
+      {children}
+    </div>
+  );
+}
+
+function Badge({ children, color = C.accent }) {
+  return (
+    <span style={{
+      background: color + "22", color, border: `1px solid ${color}44`,
+      borderRadius: 8, padding: "2px 10px", fontSize: 11, fontWeight: 700,
+      letterSpacing: 0.5, textTransform: "uppercase",
+    }}>
+      {children}
+    </span>
+  );
+}
+
+// ── Screens ───────────────────────────────────────────────────
+
+// 1. Welcome Screen
+function WelcomeScreen({ onStart, stats }) {
+  const [quoteIdx] = useState(Math.floor(Math.random() * QUOTES.length));
+  return (
+    <div style={px({ display: "flex", flexDirection: "column", minHeight: "100%", padding: "32px 20px 24px" })}>
+      {/* Header */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 32 }}>
+        <div>
+          <div style={{ fontSize: 11, color: C.textMuted, fontWeight: 700, letterSpacing: 1.5, textTransform: "uppercase" }}>
+            FOCUSSHIELD
+          </div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: C.textPrimary, lineHeight: 1.2 }}>
+            Hello 👋
+          </div>
+        </div>
+        <div style={{
+          width: 44, height: 44, borderRadius: 14, background: C.accentSoft,
+          display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22,
+        }}>🛡️</div>
+      </div>
+
+      {/* Quote card */}
+      <Card style={{ marginBottom: 20, background: `linear-gradient(135deg, ${C.accentSoft}, ${C.card})`, border: `1px solid ${C.accentSoft}` }}>
+        <div style={{ fontSize: 11, color: C.accent, fontWeight: 700, marginBottom: 8, letterSpacing: 1 }}>DAILY INSIGHT</div>
+        <div style={{ fontSize: 15, color: C.textPrimary, fontWeight: 500, lineHeight: 1.5, fontStyle: "italic" }}>
+          "{QUOTES[quoteIdx]}"
+        </div>
+      </Card>
+
+      {/* Stats row */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 20 }}>
+        {[
+          { label: "Today's Focus", value: fmtMin(stats.totalFocusTime % 86400), icon: "⏱️" },
+          { label: "Sessions", value: stats.sessions, icon: "✅" },
+          { label: "Streak", value: `${stats.streak} days`, icon: "🔥" },
+          { label: "Longest", value: fmtMin(stats.longestSession), icon: "🏆" },
+        ].map(s => (
+          <Card key={s.label} style={{ padding: 14 }}>
+            <div style={{ fontSize: 22 }}>{s.icon}</div>
+            <div style={{ fontSize: 20, fontWeight: 800, color: C.textPrimary, marginTop: 4 }}>{s.value}</div>
+            <div style={{ fontSize: 11, color: C.textSecondary, marginTop: 2 }}>{s.label}</div>
+          </Card>
+        ))}
+      </div>
+
+      {/* Weekly bar graph */}
+      <Card style={{ marginBottom: 24 }}>
+        <div style={{ fontSize: 12, color: C.textSecondary, fontWeight: 700, marginBottom: 14, letterSpacing: 0.5 }}>
+          THIS WEEK
+        </div>
+        <div style={{ display: "flex", alignItems: "flex-end", gap: 6, height: 56 }}>
+          {stats.history.map(d => {
+            const max = Math.max(...stats.history.map(x => x.mins), 1);
+            const h = Math.max((d.mins / max) * 52, d.mins > 0 ? 6 : 2);
+            return (
+              <div key={d.day} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+                <div style={{
+                  width: "100%", height: h, borderRadius: 6,
+                  background: d.day === "Sun" ? C.textMuted : `linear-gradient(180deg, ${C.accent}, ${C.accentSoft})`,
+                  transition: "height 0.3s",
+                }} />
+                <div style={{ fontSize: 9, color: C.textMuted, fontWeight: 600 }}>{d.day}</div>
+              </div>
+            );
+          })}
+        </div>
+      </Card>
+
+      <div style={{ flex: 1 }} />
+
+      <Btn onClick={onStart} style={{ width: "100%", padding: "18px 0", fontSize: 17, borderRadius: 18 }}>
+        🚀 Start Focus Session
+      </Btn>
+    </div>
+  );
+}
+
+// 2. App Selection Screen
+function AppSelectScreen({ onNext, onBack }) {
+  const [selected, setSelected] = useState(new Set());
+  const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState("All");
+
+  const categories = ["All", "Social", "Entertainment", "Messaging", "Shopping", "Music"];
+  const filtered = MOCK_APPS.filter(a =>
+    (filter === "All" || a.category === filter) &&
+    a.name.toLowerCase().includes(search.toLowerCase())
+  );
+
+  const toggle = id => setSelected(s => {
+    const n = new Set(s);
+    n.has(id) ? n.delete(id) : n.add(id);
+    return n;
+  });
+
+  return (
+    <div style={px({ display: "flex", flexDirection: "column", height: "100%", padding: "24px 20px 20px" })}>
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
+        <button onClick={onBack} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: "8px 12px", cursor: "pointer", color: C.textPrimary }}>←</button>
+        <div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: C.textPrimary }}>Select Apps to Block</div>
+          <div style={{ fontSize: 12, color: C.textSecondary }}>{selected.size} selected</div>
+        </div>
+      </div>
+
+      {/* Search */}
+      <div style={{ position: "relative", marginBottom: 12 }}>
+        <span style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: C.textMuted }}>🔍</span>
+        <input
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Search apps..."
+          style={{
+            width: "100%", padding: "12px 14px 12px 40px", borderRadius: 12,
+            border: `1px solid ${C.border}`, background: C.surface, color: C.textPrimary,
+            fontSize: 14, fontFamily: T.display, boxSizing: "border-box", outline: "none",
+          }}
+        />
+      </div>
+
+      {/* Category filters */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 16, overflowX: "auto", paddingBottom: 4 }}>
+        {categories.map(c => (
+          <button key={c} onClick={() => setFilter(c)} style={{
+            whiteSpace: "nowrap", padding: "6px 14px", borderRadius: 20, fontSize: 12, fontWeight: 600,
+            border: "none", cursor: "pointer", fontFamily: T.display,
+            background: filter === c ? C.accent : C.card,
+            color: filter === c ? "#fff" : C.textSecondary,
+          }}>{c}</button>
+        ))}
+      </div>
+
+      {/* App list */}
+      <div style={{ flex: 1, overflowY: "auto", marginRight: -4, paddingRight: 4 }}>
+        {filtered.map(app => {
+          const isSel = selected.has(app.id);
+          return (
+            <div
+              key={app.id}
+              onClick={() => toggle(app.id)}
+              style={{
+                display: "flex", alignItems: "center", gap: 14, padding: "13px 16px",
+                borderRadius: 14, marginBottom: 8, cursor: "pointer",
+                background: isSel ? C.accentSoft : C.card,
+                border: `1.5px solid ${isSel ? C.accent : C.border}`,
+                transition: "all 0.15s",
+              }}
+            >
+              <div style={{ fontSize: 26 }}>{app.icon}</div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 14, fontWeight: 600, color: C.textPrimary }}>{app.name}</div>
+                <div style={{ fontSize: 11, color: C.textMuted }}>{app.category}</div>
+              </div>
+              <div style={{
+                width: 22, height: 22, borderRadius: 7,
+                background: isSel ? C.accent : "transparent",
+                border: `2px solid ${isSel ? C.accent : C.border}`,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                flexShrink: 0, transition: "all 0.15s",
+              }}>
+                {isSel && <span style={{ fontSize: 13, color: "#fff", fontWeight: 800 }}>✓</span>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div style={{ paddingTop: 16 }}>
+        <Btn
+          onClick={() => onNext(Array.from(selected))}
+          disabled={selected.size === 0}
+          style={{ width: "100%", padding: "16px 0", fontSize: 15, borderRadius: 16 }}
+        >
+          Continue with {selected.size} app{selected.size !== 1 ? "s" : ""} →
+        </Btn>
+      </div>
+    </div>
+  );
+}
+
+// 3. Duration Screen
+function DurationScreen({ onNext, onBack }) {
+  const [selectedDur, setSelectedDur] = useState(null);
+  const [custom, setCustom] = useState(false);
+  const [customH, setCustomH] = useState("0");
+  const [customM, setCustomM] = useState("25");
+
+  const getSeconds = () => {
+    if (custom) return parseInt(customH || 0) * 3600 + parseInt(customM || 0) * 60;
+    return selectedDur;
+  };
+
+  return (
+    <div style={px({ display: "flex", flexDirection: "column", height: "100%", padding: "24px 20px 20px" })}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 24 }}>
+        <button onClick={onBack} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: "8px 12px", cursor: "pointer", color: C.textPrimary }}>←</button>
+        <div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: C.textPrimary }}>Set Focus Duration</div>
+          <div style={{ fontSize: 12, color: C.textSecondary }}>How long do you want to stay focused?</div>
+        </div>
+      </div>
+
+      {/* Pomodoro badge */}
+      <Card style={{ marginBottom: 20, border: `1px solid ${C.warn}44`, background: C.warnSoft + "88" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ fontSize: 22 }}>🍅</span>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: C.warn }}>Pomodoro Mode</div>
+            <div style={{ fontSize: 11, color: C.textSecondary }}>25 min focus · 5 min break</div>
+          </div>
+          <div style={{ marginLeft: "auto" }}>
+            <Badge color={C.warn}>RECOMMENDED</Badge>
+          </div>
+        </div>
+      </Card>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
+        {DURATIONS.map(d => {
+          const isSel = !custom && selectedDur === d.seconds;
+          return (
+            <button
+              key={d.label}
+              onClick={() => { setSelectedDur(d.seconds); setCustom(false); }}
+              style={{
+                padding: "20px 12px", borderRadius: 16, border: `1.5px solid ${isSel ? C.accent : C.border}`,
+                background: isSel ? C.accentSoft : C.card, cursor: "pointer",
+                color: isSel ? C.accent : C.textPrimary, fontFamily: T.display,
+                fontSize: 15, fontWeight: 700, transition: "all 0.15s",
+              }}
+            >
+              {d.label}
+            </button>
+          );
+        })}
+        <button
+          onClick={() => { setCustom(true); setSelectedDur(null); }}
+          style={{
+            padding: "20px 12px", borderRadius: 16, border: `1.5px solid ${custom ? C.accent : C.border}`,
+            background: custom ? C.accentSoft : C.card, cursor: "pointer",
+            color: custom ? C.accent : C.textPrimary, fontFamily: T.display,
+            fontSize: 15, fontWeight: 700, transition: "all 0.15s",
+          }}
+        >
+          ⏱️ Custom
+        </button>
+      </div>
+
+      {custom && (
+        <Card style={{ marginTop: 10, marginBottom: 10 }}>
+          <div style={{ fontSize: 12, color: C.textSecondary, marginBottom: 12, fontWeight: 600 }}>CUSTOM DURATION</div>
+          <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 4 }}>HOURS</div>
+              <input type="number" min="0" max="8" value={customH} onChange={e => setCustomH(e.target.value)}
+                style={{ width: "100%", padding: "12px", borderRadius: 10, border: `1px solid ${C.border}`, background: C.surface, color: C.textPrimary, fontSize: 20, fontFamily: T.mono, fontWeight: 700, textAlign: "center", boxSizing: "border-box" }} />
+            </div>
+            <div style={{ color: C.textMuted, fontSize: 24, fontWeight: 300, paddingTop: 16 }}>:</div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 4 }}>MINUTES</div>
+              <input type="number" min="1" max="59" value={customM} onChange={e => setCustomM(e.target.value)}
+                style={{ width: "100%", padding: "12px", borderRadius: 10, border: `1px solid ${C.border}`, background: C.surface, color: C.textPrimary, fontSize: 20, fontFamily: T.mono, fontWeight: 700, textAlign: "center", boxSizing: "border-box" }} />
+            </div>
+          </div>
+        </Card>
+      )}
+
+      <div style={{ flex: 1 }} />
+
+      <Btn
+        onClick={() => onNext(getSeconds())}
+        disabled={!getSeconds() || getSeconds() < 60}
+        style={{ width: "100%", padding: "16px 0", fontSize: 15, borderRadius: 16 }}
+      >
+        Set Duration →
+      </Btn>
+    </div>
+  );
+}
+
+// 4. Summary + Start Screen
+function SummaryScreen({ selectedIds, duration, onStart, onBack }) {
+  const apps = MOCK_APPS.filter(a => selectedIds.includes(a.id));
+  return (
+    <div style={px({ display: "flex", flexDirection: "column", height: "100%", padding: "24px 20px 20px" })}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 24 }}>
+        <button onClick={onBack} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: "8px 12px", cursor: "pointer", color: C.textPrimary }}>←</button>
+        <div style={{ fontSize: 18, fontWeight: 800, color: C.textPrimary }}>Ready to Focus?</div>
+      </div>
+
+      {/* Duration card */}
+      <Card style={{ marginBottom: 16, background: `linear-gradient(135deg, ${C.accentSoft}, ${C.card})`, border: `1px solid ${C.accent}44`, textAlign: "center" }}>
+        <div style={{ fontSize: 44, fontWeight: 900, color: C.accent, fontFamily: T.mono, letterSpacing: 2 }}>{fmt(duration)}</div>
+        <div style={{ fontSize: 12, color: C.textSecondary, marginTop: 4 }}>Focus Duration</div>
+      </Card>
+
+      {/* Blocked apps */}
+      <Card style={{ marginBottom: 16 }}>
+        <div style={{ fontSize: 12, color: C.textSecondary, fontWeight: 700, marginBottom: 12, letterSpacing: 0.5 }}>
+          🚫 APPS TO BLOCK ({apps.length})
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+          {apps.map(a => (
+            <div key={a.id} style={{
+              display: "flex", alignItems: "center", gap: 6, padding: "6px 12px",
+              borderRadius: 20, background: C.dangerSoft, border: `1px solid ${C.danger}33`,
+            }}>
+              <span style={{ fontSize: 14 }}>{a.icon}</span>
+              <span style={{ fontSize: 12, color: C.textPrimary, fontWeight: 600 }}>{a.name}</span>
+            </div>
+          ))}
+        </div>
+      </Card>
+
+      {/* What's allowed */}
+      <Card style={{ marginBottom: 20 }}>
+        <div style={{ fontSize: 12, color: C.textSecondary, fontWeight: 700, marginBottom: 12, letterSpacing: 0.5 }}>
+          ✅ ALWAYS ALLOWED
+        </div>
+        {[
+          { icon: "📞", label: "Phone Calls" },
+          { icon: "📩", label: "SMS Notifications" },
+          { icon: "🔔", label: "All Notifications" },
+          { icon: "🆘", label: "Emergency Services" },
+        ].map(item => (
+          <div key={item.label} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+            <span>{item.icon}</span>
+            <span style={{ fontSize: 13, color: C.textSecondary }}>{item.label}</span>
+          </div>
+        ))}
+      </Card>
+
+      <div style={{ flex: 1 }} />
+
+      <Btn onClick={onStart} style={{ width: "100%", padding: "18px 0", fontSize: 17, borderRadius: 18 }}>
+        🛡️ Start Focus Mode
+      </Btn>
+    </div>
+  );
+}
+
+// 5. Active Session (Focus / Blocking Screen)
+function SessionScreen({ selectedIds, duration, onEnd, stats, setStats }) {
+  const [remaining, setRemaining] = useState(duration);
+  const [showBlocked, setShowBlocked] = useState(null);
+  const [quote, setQuote] = useState(QUOTES[0]);
+  const [quoteAnim, setQuoteAnim] = useState(true);
+  const [emergencyHold, setEmergencyHold] = useState(0);
+  const [emergencyConfirm, setEmergencyConfirm] = useState(0);
+  const holdTimer = useRef(null);
+  const apps = MOCK_APPS.filter(a => selectedIds.includes(a.id));
+  const pct = Math.round(((duration - remaining) / duration) * 100);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      setRemaining(r => {
+        if (r <= 1) { clearInterval(id); onEnd(); return 0; }
+        return r - 1;
+      });
+    }, 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      setQuoteAnim(false);
+      setTimeout(() => {
+        setQuote(QUOTES[Math.floor(Math.random() * QUOTES.length)]);
+        setQuoteAnim(true);
+      }, 400);
+    }, 15000);
+    return () => clearInterval(id);
+  }, []);
+
+  // Emergency hold
+  const startHold = () => {
+    holdTimer.current = setInterval(() => {
+      setEmergencyHold(h => {
+        if (h >= 50) { clearInterval(holdTimer.current); return 50; }
+        return h + 1;
+      });
+    }, 100);
+  };
+  const endHold = () => {
+    clearInterval(holdTimer.current);
+    if (emergencyHold >= 50) {
+      if (emergencyConfirm === 0) setEmergencyConfirm(1);
+      else if (emergencyConfirm === 1) setEmergencyConfirm(2);
+    }
+    setEmergencyHold(0);
+  };
+
+  const confirmEmergency = () => {
+    if (emergencyConfirm === 2) {
+      setStats(s => ({ ...s, emergencyExits: s.emergencyExits + 1 }));
+      onEnd(true);
+    }
+  };
+
+  return (
+    <div style={px({ display: "flex", flexDirection: "column", height: "100%", background: C.bg })}>
+      {/* Blocked app overlay */}
+      {showBlocked && (
+        <div style={{
+          position: "absolute", inset: 0, zIndex: 100,
+          background: "rgba(0,0,0,0.96)", display: "flex", flexDirection: "column",
+          alignItems: "center", justifyContent: "center", padding: 32,
+        }}>
+          <div style={{ fontSize: 60, marginBottom: 16 }}>🚫</div>
+          <div style={{ fontSize: 22, fontWeight: 900, color: C.danger, marginBottom: 8, textAlign: "center" }}>
+            Stay Focused!
+          </div>
+          <div style={{ fontSize: 14, color: C.textSecondary, textAlign: "center", marginBottom: 24, lineHeight: 1.6 }}>
+            You blocked <strong style={{ color: C.textPrimary }}>{showBlocked}</strong> to protect your focus.
+            <br />You promised yourself to stay productive.
+          </div>
+          <Card style={{ background: C.accentSoft, border: `1px solid ${C.accent}44`, marginBottom: 24, textAlign: "center", width: "100%" }}>
+            <div style={{ fontSize: 12, color: C.textSecondary, marginBottom: 4 }}>TIME REMAINING</div>
+            <div style={{ fontSize: 30, fontWeight: 900, color: C.accent, fontFamily: T.mono }}>{fmt(remaining)}</div>
+          </Card>
+          <Btn variant="ghost" onClick={() => setShowBlocked(null)} style={{ width: "100%" }}>
+            ← Continue Focusing
+          </Btn>
+        </div>
+      )}
+
+      {/* Emergency confirm overlay */}
+      {emergencyConfirm === 2 && (
+        <div style={{
+          position: "absolute", inset: 0, zIndex: 90,
+          background: "rgba(0,0,0,0.92)", display: "flex", flexDirection: "column",
+          alignItems: "center", justifyContent: "center", padding: 32,
+        }}>
+          <div style={{ fontSize: 40, marginBottom: 12 }}>⚠️</div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: C.warn, marginBottom: 8 }}>Emergency Exit?</div>
+          <div style={{ fontSize: 13, color: C.textSecondary, textAlign: "center", marginBottom: 24 }}>
+            This will end your session early and be recorded in your stats. Are you sure?
+          </div>
+          <div style={{ display: "flex", gap: 10, width: "100%" }}>
+            <Btn variant="ghost" onClick={() => setEmergencyConfirm(0)} style={{ flex: 1 }}>Cancel</Btn>
+            <Btn variant="danger" onClick={confirmEmergency} style={{ flex: 1 }}>Exit Session</Btn>
+          </div>
+        </div>
+      )}
+
+      {/* Main content */}
+      <div style={{ padding: "28px 20px 20px", display: "flex", flexDirection: "column", height: "100%", boxSizing: "border-box" }}>
+        {/* Progress ring + timer */}
+        <div style={{ textAlign: "center", marginBottom: 28 }}>
+          <div style={{
+            display: "inline-flex", alignItems: "center", justifyContent: "center",
+            position: "relative", marginBottom: 12,
+          }}>
+            <svg width={160} height={160} style={{ transform: "rotate(-90deg)" }}>
+              <circle cx={80} cy={80} r={68} fill="none" stroke={C.border} strokeWidth={8} />
+              <circle cx={80} cy={80} r={68} fill="none" stroke={C.accent}
+                strokeWidth={8} strokeLinecap="round"
+                strokeDasharray={`${2 * Math.PI * 68}`}
+                strokeDashoffset={`${2 * Math.PI * 68 * (1 - pct / 100)}`}
+                style={{ transition: "stroke-dashoffset 1s linear" }}
+              />
+            </svg>
+            <div style={{ position: "absolute", textAlign: "center" }}>
+              <div style={{ fontSize: 11, color: C.textMuted, fontWeight: 700 }}>REMAINING</div>
+              <div style={{ fontSize: 26, fontWeight: 900, color: C.textPrimary, fontFamily: T.mono, lineHeight: 1.1 }}>{fmt(remaining)}</div>
+              <div style={{ fontSize: 11, color: C.accent, fontWeight: 600 }}>{pct}% done</div>
+            </div>
+          </div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: C.textPrimary }}>🛡️ Focus Mode Active</div>
+        </div>
+
+        {/* Quote */}
+        <Card style={{ marginBottom: 20, textAlign: "center", opacity: quoteAnim ? 1 : 0, transition: "opacity 0.4s" }}>
+          <div style={{ fontSize: 13, color: C.textSecondary, lineHeight: 1.6, fontStyle: "italic" }}>"{quote}"</div>
+        </Card>
+
+        {/* Blocked apps (tappable to show wall) */}
+        <div style={{ marginBottom: 20 }}>
+          <div style={{ fontSize: 11, color: C.textMuted, fontWeight: 700, marginBottom: 10, letterSpacing: 1 }}>
+            BLOCKED APPS — TAP TO TEST
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {apps.map(a => (
+              <button
+                key={a.id}
+                onClick={() => setShowBlocked(a.name)}
+                style={{
+                  display: "flex", alignItems: "center", gap: 6, padding: "8px 14px",
+                  borderRadius: 20, background: C.dangerSoft, border: `1px solid ${C.danger}44`,
+                  cursor: "pointer", fontFamily: T.display,
+                }}
+              >
+                <span style={{ fontSize: 16 }}>{a.icon}</span>
+                <span style={{ fontSize: 12, color: C.textPrimary, fontWeight: 600 }}>{a.name}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div style={{ flex: 1 }} />
+
+        {/* Emergency unlock (hold) */}
+        {emergencyConfirm === 0 && (
+          <div style={{ textAlign: "center" }}>
+            <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 6 }}>
+              {emergencyHold > 0 ? `Hold... ${Math.round(emergencyHold * 2)}%` : "Hold for emergency exit"}
+            </div>
+            <button
+              onMouseDown={startHold} onMouseUp={endHold} onTouchStart={startHold} onTouchEnd={endHold}
+              style={{
+                padding: "10px 20px", borderRadius: 12, border: `1px solid ${C.border}`,
+                background: emergencyHold > 0 ? C.dangerSoft : "transparent",
+                color: C.textMuted, cursor: "pointer", fontFamily: T.display, fontSize: 12,
+                width: "100%", transition: "all 0.1s",
+              }}
+            >
+              🔒 Emergency Exit (hold 5s)
+            </button>
+          </div>
+        )}
+        {emergencyConfirm === 1 && (
+          <Btn variant="danger" onClick={() => setEmergencyConfirm(2)} style={{ width: "100%" }}>
+            ⚠️ Confirm Emergency Exit
+          </Btn>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// 6. Session Complete Screen
+function CompleteScreen({ duration, wasEmergency, onRestart, onHome }) {
+  const [anim, setAnim] = useState(false);
+  useEffect(() => { setTimeout(() => setAnim(true), 100); }, []);
+
+  return (
+    <div style={px({
+      display: "flex", flexDirection: "column", alignItems: "center",
+      justifyContent: "center", height: "100%", padding: "32px 20px",
+      background: wasEmergency ? C.bg : `radial-gradient(ellipse at 50% 20%, ${C.successSoft}, ${C.bg})`,
+    })}>
+      <div style={{
+        fontSize: 72, marginBottom: 16,
+        transform: anim ? "scale(1)" : "scale(0.3)",
+        transition: "transform 0.5s cubic-bezier(0.34,1.56,0.64,1)",
+      }}>
+        {wasEmergency ? "😔" : "🎉"}
+      </div>
+      <div style={{
+        fontSize: 24, fontWeight: 900, color: wasEmergency ? C.warn : C.success,
+        marginBottom: 8, textAlign: "center",
+        opacity: anim ? 1 : 0, transition: "opacity 0.4s 0.3s",
+      }}>
+        {wasEmergency ? "Session Ended Early" : "Great Job!"}
+      </div>
+      <div style={{
+        fontSize: 14, color: C.textSecondary, textAlign: "center", marginBottom: 32, lineHeight: 1.6,
+        opacity: anim ? 1 : 0, transition: "opacity 0.4s 0.5s",
+      }}>
+        {wasEmergency
+          ? "It's okay. Every attempt builds discipline. Try again!"
+          : "You completed your focus session.\nYour productivity is improving every day."}
+      </div>
+
+      {!wasEmergency && (
+        <Card style={{
+          width: "100%", marginBottom: 24, textAlign: "center",
+          background: C.successSoft, border: `1px solid ${C.success}44`,
+          opacity: anim ? 1 : 0, transition: "opacity 0.4s 0.6s",
+        }}>
+          <div style={{ fontSize: 11, color: C.success, fontWeight: 700, marginBottom: 4 }}>SESSION COMPLETED</div>
+          <div style={{ fontSize: 32, fontWeight: 900, color: C.success, fontFamily: T.mono }}>{fmtMin(duration)}</div>
+          <div style={{ fontSize: 12, color: C.textMuted, marginTop: 4 }}>of focused work</div>
+        </Card>
+      )}
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 10, width: "100%", opacity: anim ? 1 : 0, transition: "opacity 0.4s 0.7s" }}>
+        <Btn onClick={onRestart} style={{ width: "100%", padding: "16px 0" }}>
+          🚀 Start Another Session
+        </Btn>
+        <Btn variant="ghost" onClick={onHome} style={{ width: "100%", padding: "16px 0" }}>
+          🏠 Back to Home
+        </Btn>
+      </div>
+    </div>
+  );
+}
+
+// ── App shell ────────────────────────────────────────────────
+const SCREENS = ["welcome", "select", "duration", "summary", "session", "complete"];
+
+export default function FocusShield() {
+  const [screen, setScreen] = useState("welcome");
+  const [selectedApps, setSelectedApps] = useState([]);
+  const [duration, setDuration] = useState(0);
+  const [wasEmergency, setWasEmergency] = useState(false);
+  const [stats, setStats] = useState(initialStats);
+
+  const goNext = next => setScreen(next);
+
+  const handleSessionEnd = (emergency = false) => {
+    setWasEmergency(emergency);
+    if (!emergency) {
+      setStats(s => ({
+        ...s,
+        totalFocusTime: s.totalFocusTime + duration,
+        sessions: s.sessions + 1,
+        longestSession: Math.max(s.longestSession, duration),
+        streak: s.streak + (s.sessions % 3 === 0 ? 1 : 0),
+      }));
+    }
+    setScreen("complete");
+  };
+
+  const reset = () => {
+    setSelectedApps([]);
+    setDuration(0);
+    setWasEmergency(false);
+    setScreen("welcome");
+  };
+
+  return (
+    <div style={{
+      minHeight: "100vh", background: C.bg,
+      display: "flex", alignItems: "center", justifyContent: "center",
+      fontFamily: T.display,
+    }}>
+      {/* Phone frame */}
+      <div style={{
+        width: 390, minHeight: 720, maxHeight: "95vh",
+        background: C.surface, borderRadius: 44,
+        overflow: "hidden", position: "relative",
+        boxShadow: "0 32px 80px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.05)",
+        display: "flex", flexDirection: "column",
+      }}>
+        {/* Status bar */}
+        <div style={{
+          display: "flex", justifyContent: "space-between", alignItems: "center",
+          padding: "12px 24px 6px", flexShrink: 0,
+        }}>
+          <div style={{ fontSize: 11, color: C.textMuted, fontWeight: 700, fontFamily: T.mono }}>9:41</div>
+          <div style={{ width: 90, height: 20, background: C.bg, borderRadius: 12 }} />
+          <div style={{ fontSize: 11, color: C.textMuted, display: "flex", gap: 4 }}>
+            <span>●●●</span><span>WiFi</span><span>🔋</span>
+          </div>
+        </div>
+
+        {/* Screen area */}
+        <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden", position: "relative" }}>
+          {screen === "welcome" && (
+            <WelcomeScreen onStart={() => goNext("select")} stats={stats} />
+          )}
+          {screen === "select" && (
+            <AppSelectScreen
+              onNext={apps => { setSelectedApps(apps); goNext("duration"); }}
+              onBack={() => goNext("welcome")}
+            />
+          )}
+          {screen === "duration" && (
+            <DurationScreen
+              onNext={sec => { setDuration(sec); goNext("summary"); }}
+              onBack={() => goNext("select")}
+            />
+          )}
+          {screen === "summary" && (
+            <SummaryScreen
+              selectedIds={selectedApps}
+              duration={duration}
+              onStart={() => goNext("session")}
+              onBack={() => goNext("duration")}
+            />
+          )}
+          {screen === "session" && (
+            <SessionScreen
+              selectedIds={selectedApps}
+              duration={duration}
+              onEnd={handleSessionEnd}
+              stats={stats}
+              setStats={setStats}
+            />
+          )}
+          {screen === "complete" && (
+            <CompleteScreen
+              duration={duration}
+              wasEmergency={wasEmergency}
+              onRestart={() => goNext("select")}
+              onHome={reset}
+            />
+          )}
+        </div>
+
+        {/* Bottom nav bar (home / stats hint) */}
+        {screen === "welcome" && (
+          <div style={{
+            display: "flex", justifyContent: "center", gap: 32, padding: "12px 0 20px",
+            borderTop: `1px solid ${C.border}`, flexShrink: 0,
+          }}>
+            {[{ icon: "🏠", label: "Home" }, { icon: "📊", label: "Stats" }, { icon: "⚙️", label: "Settings" }].map(n => (
+              <button key={n.label} style={{
+                display: "flex", flexDirection: "column", alignItems: "center", gap: 3,
+                background: "none", border: "none", cursor: "pointer",
+              }}>
+                <span style={{ fontSize: 20 }}>{n.icon}</span>
+                <span style={{ fontSize: 9, color: C.textMuted, fontFamily: T.display, fontWeight: 600 }}>{n.label}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Home indicator */}
+        <div style={{ display: "flex", justifyContent: "center", padding: "6px 0 12px", flexShrink: 0 }}>
+          <div style={{ width: 100, height: 4, background: C.border, borderRadius: 4 }} />
+        </div>
+      </div>
+    </div>
+  );
+}
